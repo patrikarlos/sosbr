@@ -119,7 +119,9 @@ backRouters(){
 
 backProjects(){
     echo "Projects"
-
+    ## NOTE FIX ANY locale chars in the description and project name, so they are stored properly and dont cause issues when restoring
+    ## åäöÅÄÖ ' " etc.. 
+    
     openstack project list -f csv > $savelocation/projects.csv
 
     routers=$(cat "$savelocation/projects.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
