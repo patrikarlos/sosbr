@@ -17,22 +17,9 @@ fi
 
 notCreatedUsers=""
 
-function parse_yaml {
-   local prefix=$2
-   local s='[[:space:]]*' w='[a-zA-Z0-9_]*' fs=$(echo @|tr @ '\034')
-   sed -ne "s|^\($s\):|\1|" \
-        -e "s|^\($s\)\($w\)$s:$s[\"']\(.*\)[\"']$s\$|\1$fs\2$fs\3|p" \
-        -e "s|^\($s\)\($w\)$s:$s\(.*\)$s\$|\1$fs\2$fs\3|p"  $1 |
-   awk -F$fs '{
-      indent = length($1)/2;
-      vname[indent] = $2;
-      for (i in vname) {if (i > indent) {delete vname[i]}}
-      if (length($3) > 0) {
-         vn=""; for (i=0; i<indent; i++) {vn=(vn)(vname[i])("_")}
-         printf("%s%s%s=\"%s\"\n", "'$prefix'",vn, $2, $3);
-      }
-   }'
-}
+echo "Reading support lib."
+source supportlib.sh
+
 
 
 restoreDoms () {
@@ -225,7 +212,7 @@ restoreNetworks() {
 
 restoreSubnets() {
     echo "<Subnetworks>"
-    openstack subnet list -f csv > ${srcDir}/subnets.csv
+
 
     tmpFile=$(mktemp)
 
@@ -315,19 +302,68 @@ restoreSubnets() {
 }
 
 restoreRouters(){
-    echo "Routers"
+    echo "<Routers>"
 
-    openstack router list -f csv > ${srcDir}/routers.csv
-
+    tmpFile=$(mktemp)
+   
     routers=$(cat "${srcDir}/routers.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
     routersString=$(cat "${srcDir}/routers.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
-    echo "Routers = $routersString"
-    mkdir -p ${srcDir}/routers/
+    echo "$routersString"
 
-    for rt in $routers; do
-	netStr=$(grep $rt "${srcDir}/routers.csv" | awk -F',' '{print $2}' | tr -d '"')
-	echo "Router: $netStr ($rt)"
-	openstack router show -f yaml $rt > ${srcDir}/routers/$rt.yaml
+    for router in ${srcDir}/routers/*.yaml; do
+
+	eval $(parse_yaml $router "RT_")
+	rtName=${RT_name}
+	
+	echo "Router ID = ${RT_id} => $rtName "
+	
+	oldProjName=$(grep ${RT_project_id} ${srcDir}/projects.csv | awk -F',' '{print $2}' | tr -d '"' )
+	oldDomainID=$(grep 'domain_id' ${srcDir}/projects/${RT_project_id}.yaml | awk -F':' '{print $2}' | tr -d '"' )
+	oldDomainName=$(grep ${oldDomainID} ${srcDir}/domains.csv | awk -F',' '{print $2}' | tr -d '"')
+
+	openstack router show $rtName &> $tmpFile
+
+	distString=""
+	if [[ "${RT_distributed}" == *"true"* ]]; then
+	    echo "Distribution"
+	    distString="--distributed"
+	else
+	    distString="--centralized"
+	fi
+
+	
+	
+	echo "${rtName} (${oldProjName}) |$HOSTROUTES.$IPV6RA.$IP6AM.$AP|"
+	if [[ "$dryRun" -eq 0 ]]; then
+	    if [[ $(grep 'No Router' $tmpFile) ]]; then
+		echo ">openstack router create $distString --description \"${RT_description}\" --project ${oldProjName} --project-domain ${oldDomainName} ${rtName}
+		openstack router create $distString --description \"${RT_description}\" --project ${oldProjName} --project-domain ${oldDomainName} ${rtName}
+		
+		
+
+				
+		## External GW
+		openstack router set --external-gateway  --enable-snat||--disable-snat
+
+		## Subnet(s)
+		openstack router add subnet ${rtName} ${subNet}
+
+
+
+	    else
+		echo " exists."
+	    fi
+	else
+	    if [[ $(grep 'No Router' $tmpFile) ]]; then
+		echo ">openstack router create ---"
+
+	    else
+		echo " exists."
+	    fi
+	fi	
+
+
+		
     done
 }
 
