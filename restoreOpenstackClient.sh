@@ -18,28 +18,29 @@ fi
 notCreatedUsers=""
 
 restoreDoms () {
-    echo "Domains "
+    echo "<Domains> "
 
     domains=$(cat ${srcDir}/domains.csv | grep -v 'Juju' | grep 'True' |awk -F',' '{print $2}' | tr -d '"' )  
     domainsString=$(cat "${srcDir}/domains.csv" | grep -v 'Juju' | grep 'True' |awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ' )  
-    echo "Domains = $domainsString"
-
+    echo "$domainsString"
+    echo ""
+    
     tmpFile=$(mktemp)
     for dom in $domains; do
-	echo -n " ${dom}"
+	echo -n "${dom}"
 	openstack domain show ${dom} &> $tmpFile
 	if [[ "$dryRun" -eq 0 ]]; then
 	    if [[ $(grep 'No domain' $tmpFile) ]]; then
 		openstack domain create --enable ${dom}
 	    else
-		echo "${dom} exists already".
+		echo " exists already".
 	    fi
 	else
 	    echo "  => Dry run. "
 	    if [[ $(grep 'No domain' $tmpFile) ]]; then
 		echo "openstack domain create --enable ${dom}"
 	    else
-		echo "${dom} exists already".
+		echo " exists already".
 	    fi	
 	fi	
     done
@@ -49,41 +50,41 @@ restoreDoms () {
 
 
 restoreProjects(){
-    echo "Projects"
+    echo "<Projects>"
 
     routers=$(cat "${srcDir}/projects.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
     routersString=$(cat "${srcDir}/projects.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
-    echo "Projects = $routersString"
+    echo "$routersString"
+    echo ""
 
     tmpFile=$(mktemp)
     for proj in $routers; do
+	projname=$(grep 'name:' ${srcDir}/projects/${proj}.yaml | awk '{print $2}' )
+	projdomainid=$(grep 'domain_id:' ${srcDir}/projects/${proj}.yaml | awk '{print $2}')
+	projdescr=$(grep 'description:' ${srcDir}/projects/${proj}.yaml | awk -F':' '{print $2}' | sed -r 's/\\xE4/ä/g' | sed -r 's/\\xF6/ö/' )
+	oldDomainName=$(grep ${projdomainid} ${srcDir}/domains.csv | awk -F',' '{print $2}' | tr -d '"')
+	
 	if [[ $(grep 'Created by Juju' ${srcDir}/projects/${proj}.yaml) ]]; then
-	    projStr=$(grep ${proj} ${srcDir/projects.csv} | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
-	    echo "Proj (${projStr}) was a default project, should already be present."
+	    echo "${projname} was a default project, should already be present (${oldDomainName})."
 	else
-	    projdomainid=$(grep 'domain_id:' ${srcDir}/projects/${proj}.yaml | awk '{print $2}')
-	    projname=$(grep 'name:' ${srcDir}/projects/${proj}.yaml | awk '{print $2}')
-	    projdescr=$(grep 'description:' ${srcDir}/projects/${proj}.yaml | awk -F':' '{print $2}')
-	    oldDomainName=$(grep ${projdomainid} ${srcDir}/domains.csv | awk -F',' '{print $2}' | tr -d '"')
-
-	    openstack project show --domain ${oldDomainName} ${dom} &> $tmpFile
-	    echo "$projname - $oldDomainName - $projdescr"
+	    openstack project show --domain ${oldDomainName} ${projname} &> $tmpFile
+	    echo -n "$projname - $oldDomainName - $projdescr "
 	    if [[ "$dryRun" -eq 0 ]]; then
 		if [[ $(grep 'No project' $tmpFile) ]]; then
-		    openstack project create --domain ${oldDomainName} --description ${projdescr} --parent ${oldDomainName} ${projname}
+		    echo ">openstack project create --domain ${oldDomainName} --description ${projdescr}  ${projname} "
+		    openstack project create --domain ${oldDomainName} --description ${projdescr} ${projname}
 		else
-		    echo "$projname - $oldDomainName already exists."
+		    echo " already exists. "
 		fi
 	    else
 		echo "  => Dry run. "
 		if [[ $(grep 'No project' $tmpFile) ]]; then
-		    echo "openstack project create --domain ${oldDomainName} --description ${projdescr} --parent ${oldDomainName} ${projname}"
+		    echo "openstack project create --domain ${oldDomainName} --description ${projdescr} ${projname}"
 		else
-		    echo "$projname - $oldDomainName already exists."
+		    echo " already exists."
 		fi   
 	    fi
-	fi
-	
+	fi	
     done
     rm $tmpFile
 
@@ -91,50 +92,57 @@ restoreProjects(){
 
 
 restoreUsers(){
-    echo "Users"
+    echo "<Users>"
     domains=$(cat ${srcDir}/domains.csv | grep -v 'Juju' | grep 'True' |awk -F',' '{print $2}' | tr -d '"' )  
     tmpFile=$(mktemp)
-    
+    echo ""
     for dom in $domains; do
 	
-	echo "Users for domain; ${dom}, ${srcDir}/domain/${dom}/user_*.yaml "
+	echo ">Users for domain; ${dom}, ${srcDir}/domain/${dom}/user_*.yaml "
 	for USER in ${srcDir}/domain/${dom}/user_*.yaml; do
-	    echo "USER = $USER "
+	    echo ">>$USER "
 	    olddefproj=$(grep 'default_project_id:' ${USER} | awk '{print $2}')
 	    username=$(grep 'name:' ${USER} | awk '{print $2}')
 	    userdescr=$(grep 'description:' ${USER} | awk -F':' '{print $2}')
 	    useremail=$(grep 'email:' ${USER} | awk -F':' '{print $2}')
 
+	    
+
+	    
 	    openstack user show --domain ${dom} ${username} &> $tmpFile
 
-
+	    echo -n "${username} (${dom})  |${userdescr}| "
 	    if [[ "$dryRun" -eq 0 ]]; then
 		if [[ "$olddefproj" ]]; then
+		    oldProjName=$(grep ${olddefproj} ${srcDir}/projects.csv | awk -F',' '{print $2}' | sed -r 's/\"//g' )
 		    if [[ $(grep 'No user ' $tmpFile) ]]; then
-			openstack user create --domain ${dom} --project ${oldProjName} --email ${useremail} --description ${userdescr}  --password ${useremail} ${username}
+			echo ">openstack user create --domain ${dom} --project ${oldProjName} --email ${useremail} --description \"${userdescr}\"  --password ${useremail} ${username}"
+			openstack user create --domain ${dom} --project ${oldProjName} --email ${useremail} --description "${userdescr}"  --password ${useremail} ${username}
 		    else
 			echo "$username ($dom) exists."
 		    fi
 		else
-		    if [[ $(grep 'No project' $tmpFile) ]]; then
-			openstack user create --domain ${dom} --email ${useremail} --description ${userdescr}  --password ${useremail} ${username}
+		    if [[ $(grep 'No user' $tmpFile) ]]; then
+			echo "openstack user create --domain ${dom} --email ${useremail} --description \"${userdescr}\"  --password ${useremail} ${username}"
+			openstack user create --domain ${dom} --email ${useremail} --description "${userdescr}"  --password ${useremail} ${username}
 		    else
-			echo "$username ($dom) exists."
+			echo " exists."
 		    fi	
 		fi
 	    else
 		echo " => Dry run."
 		if [[ "$olddefproj" ]]; then
-		    if [[ $(grep 'No project' $tmpFile) ]]; then
+		    oldProjName=$(grep ${olddefproj} ${srcDir}/projects.csv | awk -F',' '{print $2}' | sed -r 's/\"//g' )
+		    if [[ $(grep 'No user' $tmpFile) ]]; then
 			echo "openstack user create --domain ${dom} --project ${oldProjName} --email ${useremail} --description ${userdescr}  --password ${useremail} ${username}"
 		    else
-			echo "$username ($dom) exists."
+			echo " exists."
 		    fi	
 		else
-		    if [[ $(grep 'No project' $tmpFile) ]]; then
+		    if [[ $(grep 'No user' $tmpFile) ]]; then
 			echo "openstack user create --domain ${dom} --email ${useremail} --description ${userdescr}  --password ${useremail} ${username}"
 		    else
-			echo "$username ($dom) exists."
+			echo " exists."
 		    fi
 		fi
 	    fi
@@ -574,21 +582,23 @@ buildOpenrc() {
 echo "Starting"
 
 
-restoreDoms
-restoreProjects
+#restoreDoms
+#restoreProjects
 restoreUsers
 
 #restoreKeypair
+
+#restoreNetworks
+#restoreSubnets
+#restoreRouters
+#restoreSecGroups
 
 #restoreFlavor
 
 #restoreImages
 #restoreVolumes
 
-#restoreNetworks
-#restoreSubnets
-#restoreRouters
-#restoreSecGroups
+
 
 #restoreVMs
 
