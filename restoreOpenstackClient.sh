@@ -17,6 +17,24 @@ fi
 
 notCreatedUsers=""
 
+function parse_yaml {
+   local prefix=$2
+   local s='[[:space:]]*' w='[a-zA-Z0-9_]*' fs=$(echo @|tr @ '\034')
+   sed -ne "s|^\($s\):|\1|" \
+        -e "s|^\($s\)\($w\)$s:$s[\"']\(.*\)[\"']$s\$|\1$fs\2$fs\3|p" \
+        -e "s|^\($s\)\($w\)$s:$s\(.*\)$s\$|\1$fs\2$fs\3|p"  $1 |
+   awk -F$fs '{
+      indent = length($1)/2;
+      vname[indent] = $2;
+      for (i in vname) {if (i > indent) {delete vname[i]}}
+      if (length($3) > 0) {
+         vn=""; for (i=0; i<indent; i++) {vn=(vn)(vname[i])("_")}
+         printf("%s%s%s=\"%s\"\n", "'$prefix'",vn, $2, $3);
+      }
+   }'
+}
+
+
 restoreDoms () {
     echo "<Domains> "
 
@@ -206,20 +224,94 @@ restoreNetworks() {
 
 
 restoreSubnets() {
-    echo "Subnetworks"
+    echo "<Subnetworks>"
     openstack subnet list -f csv > ${srcDir}/subnets.csv
 
-    mkdir -p ${srcDir}/subnets/
+    tmpFile=$(mktemp)
+
 
     subnetworks=$(cat "${srcDir}/subnets.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
     subnetworksString=$(cat "${srcDir}/subnets.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
-    echo "Subnetworks = $subnetworksString"
+    echo "$subnetworksString"
 
-    for snet in $subnetworks; do
-	netStr=$(grep $snet "${srcDir}/subnets.csv" | awk -F',' '{print $2}' | tr -d '"')
-	echo "Subnetwork: $netStr ($snet)"
-	openstack subnet show -f yaml $snet > ${srcDir}/subnets/subnet_$snet.yaml
+    for snet in ${srcDir}/subnets/subnet_*.yaml; do
+
+	eval $(parse_yaml $snet "SUBN_")
+	snetName=${SUBN_name}
+	
+	echo "Subnet ID = ${SUBN_id} => $snetName "
+
+	oldProjName=$(grep ${SUBN_project_id} ${srcDir}/projects.csv | awk -F',' '{print $2}' | tr -d '"' )
+	oldDomainID=$(grep 'domain_id' ${srcDir}/projects/${SUBN_project_id}.yaml | awk -F':' '{print $2}' | tr -d '"' )
+	oldDomainName=$(grep ${oldDomainID} ${srcDir}/domains.csv | awk -F',' '{print $2}' | tr -d '"')
+
+	oldNetworkName=$(grep ${SUBN_network_id} ${srcDir}/networks.csv | awk -F',' '{print $2}' | tr -d '"')
+
+	dhcpString=""
+	if [[ "${SUBN_enable_dhcp}" == "true" ]]; then
+	    dhcpString="--dhcp"
+	else
+	    dhcpString="--no-dhcp"
+	fi
+
+	tagString=""
+	for TAG in ${SUBN_tags}; do
+	    tagString=$(echo "--tag $TAG $tagString")
+	done
+
+	HOSTROUTES=""
+	if [[ ${SUBN_host_routes} ]]; then
+	    echo "Routes present. Do something. "
+
+	fi
+
+	IP6RA=""
+	IP6AM=""
+
+	if [[ "${SUBN_ipv6_address_mode}" != *"null"* ]]; then
+	    echo "IPV6 AM"
+	    IP6AM="--ipv6-address-mode ${SUBN_ipv6_address_mode}"
+	fi
+
+	if [[ "${SUBN_ipv6_ra_mode}" != *"null"*  ]]; then
+	    echo "IPV6 RM "
+	    IP6RA="--ipv6-ra-mode ${SUBN_ipv6_ra_mode}"
+	fi
+
+	AP=""
+	APstart=$(echo "${SUBN_allocation_pools}" | awk -F'-' '{print "start="$1}')
+	APend=$(echo "${SUBN_allocation_pools}" | awk -F'-' '{print "end="$2}')
+	AP=$(echo "$APstart,$APend")
+	
+
+	openstack subnet show ${snetName} &>$tmpFile
+
+	echo "${snetName} (${oldProjName}) |$HOSTROUTES.$IPV6RA.$IP6AM.$AP|"
+	if [[ "$dryRun" -eq 0 ]]; then
+	    if [[ $(grep 'No Subnet' $tmpFile) ]]; then
+		echo ">openstack subnet create --allocation-pool $AP --subnet-range ${SUBN_cidr} --description \"${SUBN_description}\"--dns-nameserver \"${SUBN_dns_nameservers}\" ${dhcpString} --gateway ${SUBN_gateway_ip} $HOSTROUTES --ip-version ${SUBN_ip_version} $IP6RA $IP6AM --network ${oldNetworkName} --project ${oldProjName} --project-domain ${oldDomainName} $tagString ${snetName} "
+		
+		openstack subnet create --allocation-pool $AP --subnet-range ${SUBN_cidr} --description "${SUBN_description}"\
+			  --dns-nameserver "${SUBN_dns_nameservers}" ${dhcpString} --gateway ${SUBN_gateway_ip} \
+			  $HOSTROUTES --ip-version ${SUBN_ip_version} $IP6RA $IP6AM \
+			  --network ${oldNetworkName} --project ${oldProjName} \
+			  --project-domain ${oldDomainName} $tagString ${snetName}
+	    else
+		echo " exists."
+	    fi
+	else
+	    if [[ $(grep 'No Subnet' $tmpFile) ]]; then
+		echo "openstack subnet create --allocation-pool $AP --subnet-range ${SUBN_cidr} --description '${SUBN_description}'"\
+			  "--dns-nameserver '${SUBN_dns_nameservers}' ${dhcpString} --gateway ${SUBN_gateway_ip} ${snetName} " \
+			  "$HOSTROUTES --ip-version ${SUBN_ip_version} $IP6RA $IP6AM " \
+			  "--network ${oldNetworkName} --project ${oldProjName}" \
+			  "--project-domain ${oldDomainName} $tagString ${snetName} "
+	    else
+		echo " exists."
+	    fi
+	fi
     done
+    rm $tmpFile
 }
 
 restoreRouters(){
@@ -603,8 +695,8 @@ echo "Starting"
 
 #restoreKeypair
 
-restoreNetworks
-#restoreSubnets
+#restoreNetworks
+restoreSubnets
 #restoreRouters
 #restoreSecGroups
 
