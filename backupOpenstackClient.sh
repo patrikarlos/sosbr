@@ -378,6 +378,8 @@ backImages(){
 backKeypair() {
     echo "Keypairs"
 
+    ## Investigate or disable, cant restore anyway. 
+    
     domains=$(cat "$savelocation/domains.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
     domainsString=$(cat "$savelocation/domains.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
 
