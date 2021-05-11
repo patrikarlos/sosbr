@@ -156,73 +156,86 @@ restoreUsers(){
 
 
 restoreNetworks() {
-    echo "Networks"
+    echo "<Networks>"
 
-    networks=$(cat "$savelocation/networks.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
-    networksString=$(cat "$savelocation/networks.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
-    echo "Networks = $networksString"
+    networks=$(cat "${srcDir}/networks.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
+    networksString=$(cat "${srcDir}/networks.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
+    echo "$networksString"
+    echo ""
     tmpFile=$(mktemp)
-    // END OF DAY 
-    for netfile in ${srcDir}/networks/$networks; do
-	
+
+    for netfile in ${srcDir}/networks/network_*.yaml; do
+	echo "netfile = ${netfile} "
 	netName=$(grep 'name:' "${netfile}" | awk -F':' '{print $2}' | tr -d ' ')
 	netDescr=$(grep 'description:' "${netfile}" | awk -F':' '{print $2}' | tr -d ' ')
 	netShare=$(grep 'shared:' "${netfile}" | awk -F':' '{print $2}' | tr -d ' ')
 	netRouterExt=$(grep 'router:external:' "${netfile}" | awk -F':' '{print $3}' | tr -d ' ')
 	netProjID=$(grep 'project_id:' "${netfile}" | awk -F':' '{print $2}' | tr -d ' ')
+
+	openstack network show  ${netName} &> $tmpFile
 	
 	if [[ "$netRouterExt" == *"External"* ]]; then
 	    echo "This is an external network, it has been replaced. "
 	else
 	    oldProjName=$(grep ${netProjID} ${srcDir}/projects.csv | awk -F',' '{print $2}' | tr -d '"' )
-	    oldDomainID=$(grep 'domain_id:' ${srcDir}/projects/${oldDomainID}.yaml | awk -F':' '{print $2}' | tr -d ' ')
-	    oldDomainName=$(grep ${oldDomainOD} ${srcDir}/domains.csv | awk -F',' '{print $2}' | tr -d '"')
+	    oldDomainID=$(grep 'domain_id' ${srcDir}/projects/${netProjID}.yaml | awk -F':' '{print $2}' | tr -d '"' )
+	    oldDomainName=$(grep ${oldDomainID} ${srcDir}/domains.csv | awk -F',' '{print $2}' | tr -d '"')
 
 	    
+	    echo -n "${netName} (${oldDomainName}) |${netDescr}| <${netProjID}>" 
 	    if [[ "$dryRun" -eq 0 ]]; then
-		openstack network create --no-share --project ${oldProjName} --project-domain ${oldDomainName} --description ${netDescr} ${netName}
+		 if [[ $(grep 'No Network' $tmpFile) ]]; then
+		     echo ">openstack network create --no-share --project ${oldProjName} --project-domain ${oldDomainName} --description ${netDescr} ${netName}"
+		     openstack network create --no-share --project ${oldProjName} --project-domain ${oldDomainName} --description ${netDescr} ${netName}
+		 else
+		     echo " exists."
+		 fi
 	    else
 		echo " => Dry run."
-		echo "openstack network create --no-share --project ${oldProjName} --project-domain ${oldDomainName} --description ${netDescr} ${netName}"
+		 if [[ $(grep 'No Network' $tmpFile) ]]; then
+		     echo "openstack network create --no-share --project ${oldProjName} --project-domain ${oldDomainName} --description ${netDescr} ${netName}"
+		 else
+		     echo " exists."
+		 fi
 	    fi
 	fi
 
     done
-
+    rm $tmpFile
 }
 
 
 restoreSubnets() {
     echo "Subnetworks"
-    openstack subnet list -f csv > $savelocation/subnets.csv
+    openstack subnet list -f csv > ${srcDir}/subnets.csv
 
-    mkdir -p $savelocation/subnets/
+    mkdir -p ${srcDir}/subnets/
 
-    subnetworks=$(cat "$savelocation/subnets.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
-    subnetworksString=$(cat "$savelocation/subnets.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
+    subnetworks=$(cat "${srcDir}/subnets.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
+    subnetworksString=$(cat "${srcDir}/subnets.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
     echo "Subnetworks = $subnetworksString"
 
     for snet in $subnetworks; do
-	netStr=$(grep $snet "$savelocation/subnets.csv" | awk -F',' '{print $2}' | tr -d '"')
+	netStr=$(grep $snet "${srcDir}/subnets.csv" | awk -F',' '{print $2}' | tr -d '"')
 	echo "Subnetwork: $netStr ($snet)"
-	openstack subnet show -f yaml $snet > $savelocation/subnets/subnet_$snet.yaml
+	openstack subnet show -f yaml $snet > ${srcDir}/subnets/subnet_$snet.yaml
     done
 }
 
 restoreRouters(){
     echo "Routers"
 
-    openstack router list -f csv > $savelocation/routers.csv
+    openstack router list -f csv > ${srcDir}/routers.csv
 
-    routers=$(cat "$savelocation/routers.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
-    routersString=$(cat "$savelocation/routers.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
+    routers=$(cat "${srcDir}/routers.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
+    routersString=$(cat "${srcDir}/routers.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
     echo "Routers = $routersString"
-    mkdir -p $savelocation/routers/
+    mkdir -p ${srcDir}/routers/
 
     for rt in $routers; do
-	netStr=$(grep $rt "$savelocation/routers.csv" | awk -F',' '{print $2}' | tr -d '"')
+	netStr=$(grep $rt "${srcDir}/routers.csv" | awk -F',' '{print $2}' | tr -d '"')
 	echo "Router: $netStr ($rt)"
-	openstack router show -f yaml $rt > $savelocation/routers/$rt.yaml
+	openstack router show -f yaml $rt > ${srcDir}/routers/$rt.yaml
     done
 }
 
@@ -230,45 +243,45 @@ restoreRouters(){
 
 restoreSecGroups(){
     echo "Security Groups"
-    openstack security group list -f csv > $savelocation/security_group.csv
+    openstack security group list -f csv > ${srcDir}/security_group.csv
 
-    sg=$(cat "$savelocation/security_group.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
-    sgString=$(cat "$savelocation/security_group.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
+    sg=$(cat "${srcDir}/security_group.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
+    sgString=$(cat "${srcDir}/security_group.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
     echo "Security Groups = $sgString / $sg"
-    mkdir -p $savelocation/security_groups/
+    mkdir -p ${srcDir}/security_groups/
 
     echo " processing "
     for proj in $sg; do
-	projStr=$(grep $proj "$savelocation/security_group.csv" | awk -F',' '{print $2}' | tr -d '"')
+	projStr=$(grep $proj "${srcDir}/security_group.csv" | awk -F',' '{print $2}' | tr -d '"')
 	echo "SG: $projStr ($proj)"
-	openstack security group show -f yaml $proj >  $savelocation/security_groups/$proj.yaml
+	openstack security group show -f yaml $proj >  ${srcDir}/security_groups/$proj.yaml
     done
 
 
     echo "Security Groups - Rules"
-    openstack security group rule list -f csv > $savelocation/security_group_rules.csv
+    openstack security group rule list -f csv > ${srcDir}/security_group_rules.csv
 
-    sg=$(cat "$savelocation/security_group_rules.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
+    sg=$(cat "${srcDir}/security_group_rules.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
     echo "Security Groups - Rules "
     echo "$sg"
     echo "------------------------"
 
-    mkdir -p $savelocation/security_group_rules/
+    mkdir -p ${srcDir}/security_group_rules/
     for proj in $sg; do
 	echo "SGR: $proj " 
-	openstack security group rule show -f yaml $proj > $savelocation/security_group_rules/$proj.yaml
+	openstack security group rule show -f yaml $proj > ${srcDir}/security_group_rules/$proj.yaml
     done
 }
 
 
 saveVMs() {
     echo "VMs"
-    openstack server list --all -f csv > $savelocation/vm.csv
-    mkdir -p $savelocation/vms
+    openstack server list --all -f csv > ${srcDir}/vm.csv
+    mkdir -p ${srcDir}/vms
     mkdir -p $vmlocation/instance_disks
     
-    sg=$(cat "$savelocation/vm.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
-    sgString=$(cat "$savelocation/vm.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
+    sg=$(cat "${srcDir}/vm.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
+    sgString=$(cat "${srcDir}/vm.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
     echo "VM = $sgString"
     echo " "
 
@@ -283,12 +296,12 @@ saveVMs() {
 	   continue;
 	fi
 	   
-	   projStr=$(grep $proj "$savelocation/vm.csv" | awk -F',' '{print $2}' | tr -d '"')
+	   projStr=$(grep $proj "${srcDir}/vm.csv" | awk -F',' '{print $2}' | tr -d '"')
 	   #    echo "VM: $proj ($projStr) "
-	   openstack server show -f yaml $proj > $savelocation/vms/$proj.yaml
-	   vmname=$(grep name: $savelocation/vms/$proj.yaml | grep -v 'key_name' | grep -v 'OS-EXT' | awk '{print $2}')
-	   vmstatus=$(grep status: $savelocation/vms/$proj.yaml)
-	   volumes=$(grep volumes: $savelocation/vms/$proj.yaml)
+	   openstack server show -f yaml $proj > ${srcDir}/vms/$proj.yaml
+	   vmname=$(grep name: ${srcDir}/vms/$proj.yaml | grep -v 'key_name' | grep -v 'OS-EXT' | awk '{print $2}')
+	   vmstatus=$(grep status: ${srcDir}/vms/$proj.yaml)
+	   volumes=$(grep volumes: ${srcDir}/vms/$proj.yaml)
 
 	   if [[ -z $volumes ]]; then
 	       echo "$vmname - $vmstatus - volumes: N/A"
@@ -317,7 +330,7 @@ saveVMs() {
 
 
 	       if [ -s $vmlocation/instance_disks/${proj}.vdi ]; then
-		   echo "We already have a copy of that disk in $savelocation/instance_disks/${proj}.vdi"
+		   echo "We already have a copy of that disk in ${srcDir}/instance_disks/${proj}.vdi"
 		   alreadyRestoreed=$(echo -e "${vmname} * ${proj}\n${alreadyRestoreed}")
 
 	       else
@@ -386,10 +399,10 @@ saveVMs() {
     done
 
 #    cnodes="iDRAC-2N3FFV2 iDRAC-2HHGFV2"
-#    mkdir -p $savelocation/instance_disks/
+#    mkdir -p ${srcDir}/instance_disks/
 #
 #    for cn in ${cnodes}; do
-#	juju scp $cn:/tmp/instances/* $savelocation/instance_disks
+#	juju scp $cn:/tmp/instances/* ${srcDir}/instance_disks
 #    done
 
 }
@@ -400,18 +413,18 @@ restoreFlavor() {
 
     
     return
-    openstack flavor list -f csv > $savelocation/flavor.csv
+    openstack flavor list -f csv > ${srcDir}/flavor.csv
 
-    sg=$(cat "$savelocation/flavor.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
-    sgStr=$(cat "$savelocation/flavor.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr -d '\n')
+    sg=$(cat "${srcDir}/flavor.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
+    sgStr=$(cat "${srcDir}/flavor.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr -d '\n')
     echo "Flavors: $sgStr "
     echo "------------------------"
 
-    mkdir -p $savelocation/flavor/
+    mkdir -p ${srcDir}/flavor/
     for proj in $sg; do
-        projStr=$(grep $proj "$savelocation/flavor.csv" | awk -F',' '{print $2}' | tr -d '"')
+        projStr=$(grep $proj "${srcDir}/flavor.csv" | awk -F',' '{print $2}' | tr -d '"')
         echo "SGR: $proj ($projStr)" 
-        openstack flavor show -f yaml $proj > $savelocation/flavor/$proj.yaml
+        openstack flavor show -f yaml $proj > ${srcDir}/flavor/$proj.yaml
     done
 }
 
@@ -419,18 +432,18 @@ restoreVolume(){
     echo "Volumes"
     # ## KOLLA UPP!!! 
 
-    openstack volume list -f csv --all > $savelocation/volume.csv
+    openstack volume list -f csv --all > ${srcDir}/volume.csv
 
-    sg=$(cat "$savelocation/volume.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
-    sgStr=$(cat "$savelocation/volume.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr -d '\n')
+    sg=$(cat "${srcDir}/volume.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
+    sgStr=$(cat "${srcDir}/volume.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr -d '\n')
     echo "Volume: $sgStr "
     echo "------------------------"
 
-    mkdir -p $savelocation/volume/
+    mkdir -p ${srcDir}/volume/
     for proj in $sg; do
-	projStr=$(grep $proj "$savelocation/volume.csv" | awk -F',' '{print $2}' | tr -d '"')
+	projStr=$(grep $proj "${srcDir}/volume.csv" | awk -F',' '{print $2}' | tr -d '"')
 	echo "Vol: $proj ($projStr)" 
-	openstack volume show -f yaml $proj > $savelocation/volume/$proj.yaml
+	openstack volume show -f yaml $proj > ${srcDir}/volume/$proj.yaml
 
 	volname=$(echo "${proj}_snapshot")
 	if [[ $snapshot ]]; then
@@ -446,23 +459,23 @@ restoreVolume(){
 
 restoreImages(){
     echo "Images"
-    openstack image list -f csv > $savelocation/image.csv
+    openstack image list -f csv > ${srcDir}/image.csv
 
-    sg=$(cat "$savelocation/image.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
-    sgStr=$(cat "$savelocation/image.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr -d '\n')
+    sg=$(cat "${srcDir}/image.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
+    sgStr=$(cat "${srcDir}/image.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr -d '\n')
     echo "Image: $sgStr "
     echo "------------------------"
 
-    mkdir -p $savelocation/image/
+    mkdir -p ${srcDir}/image/
     for proj in $sg; do
-	projStr=$(grep $proj "$savelocation/image.csv" | awk -F',' '{print $2}' | tr -d '"')
+	projStr=$(grep $proj "${srcDir}/image.csv" | awk -F',' '{print $2}' | tr -d '"')
 	echo "Image: $proj ($projStr)" 
-	openstack image show -f yaml $proj > $savelocation/image/$proj.yaml
+	openstack image show -f yaml $proj > ${srcDir}/image/$proj.yaml
 
 	if [[ $snapshot ]]; then
 	    imName=$(echo "$projStr-$sTime" | tr " " "_")
 	    echo -e "\tGrabbing copy, stored to $imName";
-	    echo -e "\topenstack image save --file $savelocation/image/$imName.osimg"
+	    echo -e "\topenstack image save --file ${srcDir}/image/$imName.osimg"
 	fi
 	
     done
@@ -471,12 +484,14 @@ restoreImages(){
 
 restoreKeypair() {
     echo "Keypairs"
-
-    domains=$(cat "$savelocation/domains.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
-    domainsString=$(cat "$savelocation/domains.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
+    echo "Will not restore keypairs, as we do not have them."
+    
+    return 
+    domains=$(cat "${srcDir}/domains.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
+    domainsString=$(cat "${srcDir}/domains.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
 
     for dom in $domains; do
-	domStr=$(grep $dom "$savelocation/domains.csv" | awk -F',' '{print $2}' | tr -d '"' | tr ' ' '_')
+	domStr=$(grep $dom "${srcDir}/domains.csv" | awk -F',' '{print $2}' | tr -d '"' | tr ' ' '_')
 	echo "Domain: $domStr ($dom)"
 	
 	
@@ -485,10 +500,10 @@ restoreKeypair() {
 	echo "users = $usersString "
 
 	for usr in $users; do
- 	    usrStr=$(grep $usr "$savelocation/domain/$domStr/users.csv" | awk -F',' '{print $2}' | tr -d '"')
+ 	    usrStr=$(grep $usr "${srcDir}/domain/$domStr/users.csv" | awk -F',' '{print $2}' | tr -d '"')
 
-	    mkdir -p $savelocation/keypair/$domStr/$usr
-	    nova keypair-list --user $usr  > $savelocation/keypair/$domStr/kp_$usr.csv
+	    mkdir -p ${srcDir}/keypair/$domStr/$usr
+	    nova keypair-list --user $usr  > ${srcDir}/keypair/$domStr/kp_$usr.csv
 	    
 	    kpl=$(nova keypair-list --user $usr | sed 1,3d | grep '|' | awk '{print $2}')
 	    echo "keypairs for $dom/$usr ($usrStr)"
@@ -496,7 +511,7 @@ restoreKeypair() {
 	    echo "------"
 	    for keyid in $kpl; do
 		echo -e "\t$keyid "
-		nova keypair-show --user $usr $keyid  > $savelocation/keypair/$domStr/$usr/kp_$keyid.yaml
+		nova keypair-show --user $usr $keyid  > ${srcDir}/keypair/$domStr/$usr/kp_$keyid.yaml
 	    done
 
 	done
@@ -513,15 +528,15 @@ buildOpenrc() {
     domains="566007b49bb94d43bde4494a1cd1819d 8a585d8014f8473289ab54b8c71fe16c 60b7281de3a04c549b80101f84c5a338"
 
     for dom in $domains; do
-	domStr=$(grep $dom "$savelocation/domains.csv" | awk -F',' '{print $2}' | tr -d '"'| tr ' ' '_')
+	domStr=$(grep $dom "${srcDir}/domains.csv" | awk -F',' '{print $2}' | tr -d '"'| tr ' ' '_')
 	echo "Domain: $domStr ($dom)"
-	openstack user list -f csv --domain $dom > $savelocation/domain/$domStr/users.csv
-	users=$(cat "$savelocation/domain/$domStr/users.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
-	usersString=$(cat "$savelocation/domain/$domStr/users.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
+	openstack user list -f csv --domain $dom > ${srcDir}/domain/$domStr/users.csv
+	users=$(cat "${srcDir}/domain/$domStr/users.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
+	usersString=$(cat "${srcDir}/domain/$domStr/users.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
 	echo "users = $usersString "
 
 	for usr in $users; do
-	    usrStr=$(grep $usr "$savelocation/domain/$domStr/users.csv" | awk -F',' '{print $2}' | tr -d '"')
+	    usrStr=$(grep $usr "${srcDir}/domain/$domStr/users.csv" | awk -F',' '{print $2}' | tr -d '"')
 	    echo "$usrStr ($usr) "
 	    uemail=$(openstack user show -f yaml $usr | grep 'email:' | awk '{print $2}')
 	    userEmails=$(echo -e "$uemail\n$userEmails")
@@ -584,11 +599,11 @@ echo "Starting"
 
 #restoreDoms
 #restoreProjects
-restoreUsers
+#restoreUsers
 
 #restoreKeypair
 
-#restoreNetworks
+restoreNetworks
 #restoreSubnets
 #restoreRouters
 #restoreSecGroups
