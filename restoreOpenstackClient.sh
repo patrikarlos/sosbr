@@ -310,12 +310,27 @@ restoreRouters(){
     routersString=$(cat "${srcDir}/routers.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
     echo "$routersString"
 
+    renamedNetworks=""
+    renamedRouters=""
+    renamedRoutersID=""    
+    renamedSubnets=""
     for router in ${srcDir}/routers/*.yaml; do
 
 	eval $(parse_yaml $router "RT_")
 	rtName=${RT_name}
 	
-	echo "Router ID = ${RT_id} => $rtName "
+	echo -n "Router ID = ${RT_id} => $rtName "
+
+	if [[ "${rtName}" == "whiterouter" ]]; then
+	    renamedRouters=$(echo "${renamedRouters} ${rtName}")
+	    renamedRoutersID=$(echo "${renamedRoutersID} ${RT_id}")
+	    rtName=$(echo "provider-router")
+	    echo " (renaming) ${rtName} ."
+
+	else
+	    echo "."
+	fi
+	
 	
 	oldProjName=$(grep ${RT_project_id} ${srcDir}/projects.csv | awk -F',' '{print $2}' | tr -d '"' )
 	oldDomainID=$(grep 'domain_id' ${srcDir}/projects/${RT_project_id}.yaml | awk -F':' '{print $2}' | tr -d '"' )
@@ -325,45 +340,244 @@ restoreRouters(){
 
 	distString=""
 	if [[ "${RT_distributed}" == *"true"* ]]; then
-	    echo "Distribution"
 	    distString="--distributed"
 	else
 	    distString="--centralized"
 	fi
-
+	distString="" ## Override v2.0/routers seems to not accept --distributed
 	
 	
 	echo "${rtName} (${oldProjName}) |$HOSTROUTES.$IPV6RA.$IP6AM.$AP|"
 	if [[ "$dryRun" -eq 0 ]]; then
 	    if [[ $(grep 'No Router' $tmpFile) ]]; then
-		echo ">openstack router create $distString --description \"${RT_description}\" --project ${oldProjName} --project-domain ${oldDomainName} ${rtName}
+		echo ">openstack router create $distString --description \"${RT_description}\" --project ${oldProjName} --project-domain ${oldDomainName} ${rtName}"
+
 		openstack router create $distString --description \"${RT_description}\" --project ${oldProjName} --project-domain ${oldDomainName} ${rtName}
 		
+		metaData=$(cat $router | awk "/external_gateway_info/{flag=1;print $1;next}/}'/{flag=0;print $1}flag" | sed "s/external_gateway_info: '//" |  tr '\n' ' ' | tr ',' '\n'| sed 's/^{"/"/g' | sed "s/}'//g")
+		##This requires work to be _GENERIC_ 
+
+		network_id=$(echo $metaData | grep 'network_id' | awk -F':' '{print $2}' | tr -d ' "' | sed 's/external_fixed_ips//g')
+		subnet_id=$(echo $metaData | grep 'external_fixed_ip' | awk -F':' '{print $4}' | tr -d ' "' | sed 's/ip_address//g' )
+		enable_snat=$(echo $metaData | grep 'enable_snat' | awk -F':' '{print $2}' | sed 's/external_fixed_ips//g' | tr -d '"')
+
+		echo "metaData"
+		echo "|$metaData|"
+		echo "network_id = ${network_id} "
+		echo "subnet_id = ${subnet_id} "
+		echo "enable_snat = ${enable_snat} "
+
 		
+		snatString=""
+		if [[ "${enable_snat}" == "true" ]]; then
+		    snatString="--enable-snat"
+		else
+		    snatString="--disable-snat"
+		fi
 
-				
-		## External GW
-		openstack router set --external-gateway  --enable-snat||--disable-snat
+		networkName=""
+		network_OldName=$(grep ${network_id} ${srcDir}/networks.csv | awk -F',' '{print $2}' | tr -d '" ')
+		
+		if [[ "${network_OldName}" == *"External-PublicNetwork"* ]]; then
+		    networkName="ext_net"
+		    renamedNetworks=$(echo "${renamedNetworks} ${network_OldName}")
+		else
+		    networkName=${network_OldName}
+		fi
+		
+		echo ">openstack router set --external-gateway ${networkName} ${snatString} ${rtName}"
+		openstack router set --external-gateway ${networkName} ${snatString} ${rtName}
 
-		## Subnet(s)
-		openstack router add subnet ${rtName} ${subNet}
+		#This is the external subnet. Is it needed???
+		# addsubnet=0;
+		# if [[ -f ${srcDir}/subnets/subnet_${subnet_id}.yaml ]]; then
+		#     subnetName=$(grep '^name' ${srcDir}/subnets/subnet_${subnet_id}.yaml | awk -F':' '{ print $2 }' )
+		#     addsubnet=1;
+		# else
+		#     echo -e "\nMissing subnet description file, ${subnet_id}.\n"
+		#     echo -e "${srcDir}/subnets/subnet_${subnet_id}.yaml \n";
+		#     addsubnet=0;
+		# fi
+		# if [[ "${subnetName}" == *"ext_white_subnet"* ]]; then
+		#     echo " (rename subnet)"
+		#     renamedSubnets=$(echo "${renamedSubnets} ${subnetName}")
+		#     subnetName=$(echo "ext");
+		# fi
+		
+		# echo "subnetName = |${subnetName}|"		
+		# if [[ $addsubnet -eq 1 ]]; then
+		#     echo ">openstack router add subnet ${rtName} ${subnetName}"
+		#     openstack router add subnet ${rtName} ${subnetName}
+		# fi
+
+		## Working on subnets to attach
+		metaData=$(cat $router | awk "/interfaces_info/{flag=1;print $1;next}/}]'/{flag=0;print $1}flag" | awk "/interfaces_info/{flag=1;print $1;next}/}]'/{flag=0;print $1}flag" | sed "s/interfaces_info: '//" |  tr '\n' ' ' | tr ',' '\n'| sed 's/^{"/"/g' | sed "s/}'//g" | tr -d "[]{}'" | grep 'subnet_id' | tr -d '" ' | awk -F':' '{print $2}'  | uniq )
+
+		echo "Adding subnets"
+		echo "${metaData} "
+		for info in "${metaData}"; do
+		    if [[ -f ${srcDir}/subnets/subnet_${info}.yaml ]]; then
+			subnetName=$(grep '^name' ${srcDir}/subnets/subnet_${info}.yaml | awk -F':' '{ print $2 }' )
+			addsubnet=1;
+		    else
+			echo -e "\nMissing subnet description file, ${subnet_id}.\n"
+			echo -e "${srcDir}/subnets/subnet_${subnet_id}.yaml \n";
+			addsubnet=0;
+		    fi
+		    echo "subnetName = |${subnetName}|"
+		
+		    if [[ $addsubnet -eq 1 ]]; then
+			echo ">openstack router add subnet ${rtName} ${subnetName}"
+			openstack router add subnet ${rtName} ${subnetName}
+		    fi
+		done
 
 
 
+		
 	    else
 		echo " exists."
 	    fi
 	else
 	    if [[ $(grep 'No Router' $tmpFile) ]]; then
-		echo ">openstack router create ---"
+		echo "openstack router create $distString --description \"${RT_description}\" --project ${oldProjName} --project-domain ${oldDomainName} ${rtName}"
+		
+		
+		metaData=$(cat $router | awk "/external_gateway_info/{flag=1;print $1;next}/}'/{flag=0;print $1}flag" | sed "s/external_gateway_info: '//" |  tr '\n' ' ' | tr ',' '\n'| sed 's/^{"/"/g' | sed "s/}'//g")
+		##This requires work to be _GENERIC_ 
 
+		network_id=$(echo $metaData | grep 'network_id' | awk -F':' '{print $2}' | tr -d ' "')
+		subnet_id=$(echo $metaData | grep 'external_fixed_ip' | awk -F':' '{print $4}' | tr -d ' "' | sed 's/ip_address//g' )
+		enable_snat=$(echo $metaData | grep 'enable_snat' | awk -F':' '{print $2}')
+		
+#		echo "|$metaData|"
+#		echo "network_id = ${network_id} "
+#		echo "subnet_id = ${subnet_id} "
+#		echo "enable_snat = ${enable_snat} "
+
+		
+		snatString=""
+		if [[ "${enable_snat}" == "true" ]]; then
+		    snatString="--enable-snat"
+		else
+		    snatString="--disable-snat"
+		fi
+
+		networkName=""
+		network_OldName=$(grep ${network_id} ${srcDir}/networks.csv | awk -F'|' '{print $2}' | tr -d ' ')
+		
+		if [[ "${network_OldName}" == "External-PublicNetwork" ]]; then
+		    networkName="ext_net"
+		    renamedNetworks=$(echo "${renamedNetworks} ${network_OldName}")
+		else
+		    networkName=${network_OldName}
+		fi
+		
+		echo "openstack router set --external-gateway ${networkName} ${snatString} ${rtName}"
+		#This is the external subnet. Is it needed???
+		# addsubnet=0;
+		# if [[ -f ${srcDir}/subnets/subnet_${subnet_id}.yaml ]]; then
+		#     subnetName=$(grep '^name' ${srcDir}/subnets/subnet_${subnet_id}.yaml | awk -F':' '{ print $2 }' )
+		#     addsubnet=1;
+		# else
+		#     echo -e "\nMissing subnet description file, ${subnet_id}.\n"
+		#     echo -e "${srcDir}/subnets/subnet_${subnet_id}.yaml \n";
+		#     addsubnet=0;
+		# fi
+		# if [[ "${subnetName}" == *"ext_white_subnet"* ]]; then
+		#     echo " (rename subnet)"
+		#     renamedSubnets=$(echo "${renamedSubnets} ${subnetName}")
+		#     subnetName=$(echo "ext");
+		# fi
+		
+		# echo "subnetName = |${subnetName}|"
+		
+		# if [[ $addsubnet -eq 1 ]]; then
+		#     echo "openstack router add subnet ${rtName} ${subnetName}"
+		# fi
+
+		## Working on subnets to attach
+		metaData=$(cat $router | awk "/interfaces_info/{flag=1;print $1;next}/}]'/{flag=0;print $1}flag" | awk "/interfaces_info/{flag=1;print $1;next}/}]'/{flag=0;print $1}flag" | sed "s/interfaces_info: '//" |  tr '\n' ' ' | tr ',' '\n'| sed 's/^{"/"/g' | sed "s/}'//g" | tr -d "[]{}'" | grep 'subnet_id' | tr -d '" ' | awk -F':' '{print $2}'  | uniq )
+
+		echo "Adding subnets"
+		echo "${metaData} "
+		for info in "${metaData}"; do
+		    if [[ -f ${srcDir}/subnets/subnet_${info}.yaml ]]; then
+			subnetName=$(grep '^name' ${srcDir}/subnets/subnet_${info}.yaml | awk -F':' '{ print $2 }' )
+			addsubnet=1;
+		    else
+			echo -e "\nMissing subnet description file, ${subnet_id}.\n"
+			echo -e "${srcDir}/subnets/subnet_${subnet_id}.yaml \n";
+			addsubnet=0;
+		    fi
+		    echo "subnetName = |${subnetName}|"
+		
+		    if [[ $addsubnet -eq 1 ]]; then
+			echo "openstack router add subnet ${rtName} ${subnetName}"
+		    fi
+		done
+
+		
 	    else
 		echo " exists."
 	    fi
 	fi	
 
 
-		
+	echo "  --next--"
+    done
+
+
+    
+    echo "Renamed Routers :>"
+    echo "$renamedRouters"
+    echo "Renamed Networks :>"
+    echo "$renamedNetworks"
+    echo "Renamed Subnets :>"
+    echo "$renamedSubnets"
+
+
+    echo "Fixing the subnets attached to the routers that were renamed and existed."
+    echo "These are the IDs: | $renamedRoutersID |"
+
+    for routerID in "$renamedRoutersID"; do
+	routerID=$(echo "$routerID" | tr -d ' ');
+	echo "Working on ${srcDir}/routers/${routerID}.yaml"
+	router=$(echo "${srcDir}/routers/${routerID}.yaml")
+#	eval $(parse_yaml $router "RT_") ## Not needed as we only have ONE provider router. If multiple, it be different.
+	rtName=$(echo "provider-router")
+	
+	echo "Router ID = ${RT_id} => $rtName "
+	echo " routerID = $routerID "
+	
+    	## Working on subnets to attach
+	metaData=$(cat $router | awk "/interfaces_info/{flag=1;print $1;next}/}]'/{flag=0;print $1}flag" | awk "/interfaces_info/{flag=1;print $1;next}/}]'/{flag=0;print $1}flag" | sed "s/interfaces_info: '//" |  tr '\n' ' ' | tr ',' '\n'| sed 's/^{"/"/g' | sed "s/}'//g" | tr -d "[]{}'" | grep 'subnet_id' | tr -d '" ' | awk -F':' '{print $2}'  | sort | uniq | tr '\n' ' ')
+	
+	echo "Adding subnets to $rtName"
+	echo "${metaData} "
+	for info in ${metaData}; do
+	    addsubnet=0;
+	    echo -n "$info"
+	    if [[ -f ${srcDir}/subnets/subnet_${info}.yaml ]]; then
+		subnetName=$(grep '^name' ${srcDir}/subnets/subnet_${info}.yaml | awk -F':' '{ print $2 }' )
+		addsubnet=1;
+	    else
+		echo -e "\nMissing subnet description file, ${subnet_id}."
+		echo -e "${srcDir}/subnets/subnet_${subnet_id}.yaml \n";
+		addsubnet=0;
+	    fi
+	    echo -n " => ${subnetName}"
+	    
+	    if [[ $addsubnet -eq 1 ]]; then
+		echo " adding."
+		if [[ "$dryRun" -eq 0 ]]; then
+		    echo ">openstack router add subnet ${rtName} ${subnetName}"
+		    openstack router add subnet ${rtName} ${subnetName}
+		else
+		    echo "openstack router add subnet ${rtName} ${subnetName}"
+		fi
+	    fi
+	done
     done
 }
 
@@ -587,24 +801,27 @@ restoreVolume(){
 
 restoreImages(){
     echo "Images"
-    openstack image list -f csv > ${srcDir}/image.csv
+    cat ${srcDir}/image.csv
 
+    #${srcDir}/images.csv
+    #${srcDir}/image/
+    #${srcDir}/image_folder/
+    
+    
+    
     sg=$(cat "${srcDir}/image.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
     sgStr=$(cat "${srcDir}/image.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr -d '\n')
     echo "Image: $sgStr "
     echo "------------------------"
 
-    mkdir -p ${srcDir}/image/
-    for proj in $sg; do
+
+    for proj in ${srcDir}/image/*.yaml; do
+
 	projStr=$(grep $proj "${srcDir}/image.csv" | awk -F',' '{print $2}' | tr -d '"')
 	echo "Image: $proj ($projStr)" 
-	openstack image show -f yaml $proj > ${srcDir}/image/$proj.yaml
 
-	if [[ $snapshot ]]; then
-	    imName=$(echo "$projStr-$sTime" | tr " " "_")
-	    echo -e "\tGrabbing copy, stored to $imName";
-	    echo -e "\topenstack image save --file ${srcDir}/image/$imName.osimg"
-	fi
+
+	echo "openstack image add project --project-domain <image> <project>"
 	
     done
 
@@ -732,8 +949,8 @@ echo "Starting"
 #restoreKeypair
 
 #restoreNetworks
-restoreSubnets
-#restoreRouters
+#restoreSubnets
+restoreRouters
 #restoreSecGroups
 
 #restoreFlavor
