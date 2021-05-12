@@ -5,7 +5,7 @@ echo "Expects that you sourced corresponding file."
 
 srcDir=$1
 
-dryRun=0
+dryRun=1
 
 #sTime=$(date +"%Y-%m-%d-%H:%M:%S")
 restTime=$(date +"%Y-%m-%d") ## During DEBUG/DEV
@@ -19,7 +19,7 @@ notCreatedUsers=""
 
 echo "Reading support lib."
 #source supportlib.sh
-source ../parse_yaml/src/parse_yaml.sh
+source /usr/local/src/parse_yaml.sh
 
 
 restoreDoms () {
