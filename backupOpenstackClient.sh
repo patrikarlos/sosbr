@@ -139,6 +139,8 @@ backProjects(){
 
 backSecGroups(){
     echo "Security Groups"
+
+    ## BACKUP RULES separately!!
     openstack security group list -f csv > $savelocation/security_group.csv
 
     sg=$(cat "$savelocation/security_group.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')

@@ -5,7 +5,7 @@ echo "Expects that you sourced corresponding file."
 
 srcDir=$1
 
-dryRun=1
+dryRun=0
 
 #sTime=$(date +"%Y-%m-%d-%H:%M:%S")
 restTime=$(date +"%Y-%m-%d") ## During DEBUG/DEV
@@ -18,8 +18,8 @@ fi
 notCreatedUsers=""
 
 echo "Reading support lib."
-source supportlib.sh
-
+#source supportlib.sh
+source ../parse_yaml/src/parse_yaml.sh
 
 
 restoreDoms () {
@@ -585,40 +585,96 @@ restoreRouters(){
 
 restoreSecGroups(){
     echo "Security Groups"
-    openstack security group list -f csv > ${srcDir}/security_group.csv
+
 
     sg=$(cat "${srcDir}/security_group.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
     sgString=$(cat "${srcDir}/security_group.csv" | sed 1,1d | awk -F',' '{print $2}' | tr -d '"' | tr '\n' ' ')
-    echo "Security Groups = $sgString / $sg"
-    mkdir -p ${srcDir}/security_groups/
+    echo "Security Groups = $sgString "
 
+    tmpFile=$(mktemp)
+    
     echo " processing "
-    for proj in $sg; do
-	projStr=$(grep $proj "${srcDir}/security_group.csv" | awk -F',' '{print $2}' | tr -d '"')
-	echo "SG: $projStr ($proj)"
-	openstack security group show -f yaml $proj >  ${srcDir}/security_groups/$proj.yaml
+    for SGROUP in ${srcDir}/security_groups/*.yaml; do
+
+	echo "$SGROUP"
+	echo ""
+	eval $(parse_yaml $SGROUP "SG_")
+
+	projectID=$(echo ${SG_project_id})
+	oldProjName=$(grep ${projectID} ${srcDir}/projects.csv | awk -F',' '{print $2}' | tr -d '"' )
+	if [[ "$dryRun" -eq 0 ]]; then
+
+	    ##CHECK IF SECURIT GROUP + PROJECT exists. 
+	    echo ">openstack security group create --project ${oldProjName} --tag autorestored -f yaml ${SG_name} | tee $tmpFile"
+	    openstack security group create --project ${oldProjName} --tag autorestored -f yaml ${SG_name} | tee $tmpFile
+	    
+	    
+	else
+	    echo "openstack security group create --project ${oldProjName} --tag autorestored -f yaml ${SG_name} | tee $tmpFile"
+	fi
+	
+	sgid=$(grep 'id:' $tmpFile | head -1 | awk -F':' '{print $2}' | tr -d ' ' )
+	if [[ -z "$sgid" ]]; then
+	    sgid="[DRYRUN]"
+	fi
+	
+	rules=$(echo "${SG_rules}" | sed 's/created_at/\nRULE/g' )
+
+	echo -e "$rules" | while read i; do
+	    if [[ -z "$i" ]]; then 
+#		echo "(empty)"
+		continue;
+	    fi
+	    perLine=$(echo "$i" | tr ',' '\n')
+#	    echo -e "=> $perLine"
+	    direction=$(echo -e "$perLine" | grep 'direction' | awk -F'=' '{print $2}' | tr -d "'")
+	    ethertype=$(echo -e "$perLine" | grep 'ethertype' | awk -F'=' '{print $2}' | tr -d "'")
+	    portrangemax=$(echo -e "$perLine" | grep 'port_range_max' | awk -F'=' '{print $2}' | tr -d "'")
+	    portrangemin=$(echo -e "$perLine" | grep 'port_range_min' | awk -F'=' '{print $2}' | tr -d "'")
+	    protocol=$(echo -e "$perLine" | grep 'protocol' | awk -F'=' '{print $2}' | tr -d "'")
+	    remoteipprefix=$(echo -e "$perLine" | grep 'remote_ip_prefix' | awk -F'=' '{print $2}' | tr -d "'")
+
+#	    echo "direction = $direction"
+#	    echo "ethertype = $ethertype "
+#	    echo "prmax= $portrangemax"
+#	    echo "prmin= $portrangemin"
+#	    echo "Protocol = |$protocol|"
+#	    echo "rpprfix = $remoteipprefix"
+	    
+	    dirString=""
+	    if [[ "$direction" == *"egress"* ]]; then
+		dirString="--egress"
+	    else
+		dirString="--ingress"
+	    fi
+	    
+	    if [[ ! -z "$protocol" ]]; then
+		if [[ "$dryRun" -eq 0 ]]; then
+		    echo ">openstack security group rule create $dirString --project ${oldProjName} --protocol ${protocol} --dst-port \"${protrangemin}:${portrangemax}\" --remote-ip ${remoteipprefix} $sgid"
+		    openstack security group rule create $dirString --project ${oldProjName} --protocol ${protocol} --dst-port \"${protrangemin}:${portrangemax}\" --remote-ip ${remoteipprefix} $sgid
+		else
+		    echo "openstack security group rule create $dirString --project ${oldProjName} --protocol ${protocol} --dst-port \"${protrangemin}:${portrangemax}\" --remote-ip ${remoteipprefix} $sgid"
+		fi
+		
+	    else
+		echo "Probably std. rule, not adding."
+	    fi
+	    
+	done
+
+	
+	echo "-----------------"
+	echo ""
     done
 
+#    rm $tmpFile
 
-    echo "Security Groups - Rules"
-    openstack security group rule list -f csv > ${srcDir}/security_group_rules.csv
-
-    sg=$(cat "${srcDir}/security_group_rules.csv" | sed 1,1d | awk -F',' '{print $1}' | tr -d '"')
-    echo "Security Groups - Rules "
-    echo "$sg"
-    echo "------------------------"
-
-    mkdir -p ${srcDir}/security_group_rules/
-    for proj in $sg; do
-	echo "SGR: $proj " 
-	openstack security group rule show -f yaml $proj > ${srcDir}/security_group_rules/$proj.yaml
-    done
 }
 
 
 saveVMs() {
     echo "VMs"
-    openstack server list --all -f csv > ${srcDir}/vm.csv
+
     mkdir -p ${srcDir}/vms
     mkdir -p $vmlocation/instance_disks
     
@@ -951,7 +1007,7 @@ echo "Starting"
 #restoreNetworks
 #restoreSubnets
 #restoreRouters
-#restoreSecGroups
+restoreSecGroups
 
 #restoreFlavor
 
