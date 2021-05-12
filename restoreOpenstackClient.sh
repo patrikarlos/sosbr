@@ -5,7 +5,7 @@ echo "Expects that you sourced corresponding file."
 
 srcDir=$1
 
-dryRun=0
+dryRun=1
 
 #sTime=$(date +"%Y-%m-%d-%H:%M:%S")
 restTime=$(date +"%Y-%m-%d") ## During DEBUG/DEV
@@ -950,7 +950,7 @@ echo "Starting"
 
 #restoreNetworks
 #restoreSubnets
-restoreRouters
+#restoreRouters
 #restoreSecGroups
 
 #restoreFlavor
